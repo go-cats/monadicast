@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+prettyplease = "0.2"
+quote = "1.0.37"
+syn = { version = "2.0.79", features = ["full", "visit-mut", "parsing", "visit"] }
