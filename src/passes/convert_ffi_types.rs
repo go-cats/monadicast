@@ -1,8 +1,6 @@
-use quote::{quote, ToTokens};
-use std::fmt::Pointer;
-use std::fs;
-use syn::visit::{self, Visit};
-use syn::{parse_file, visit_mut::VisitMut, FnArg, ItemFn, PatType, Type, TypePtr};
+use quote::ToTokens;
+use syn::{visit_mut::VisitMut, File, Type};
+use crate::monad::ast::{MonadicAst, Pass};
 
 static RULES: &[(&str, &str)] = &[
     ("libc::c_int", "i32"),
@@ -14,8 +12,14 @@ static RULES: &[(&str, &str)] = &[
     ("libc::c_ulong", "u64"),
 ];
 
-struct TypeReplacer<'a> {
+pub struct TypeReplacer<'a> {
     rules: &'a [(&'a str, &'a str)],
+}
+
+impl TypeReplacer<'_> {
+    pub fn new() -> Self {
+        Self { rules: RULES }
+    }
 }
 
 impl VisitMut for TypeReplacer<'_> {
@@ -36,14 +40,9 @@ impl VisitMut for TypeReplacer<'_> {
     }
 }
 
-pub fn replace_types_in_file(
-    file_path: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let content = fs::read_to_string(file_path)?;
-    let mut ast = parse_file(&content)?;
-    let mut replacer = TypeReplacer { rules: RULES };
-
-    replacer.visit_file_mut(&mut ast);
-
-    Ok(prettyplease::unparse(&ast))
+impl Pass for TypeReplacer<'_> {
+    fn bind(&mut self, mut ast: File) -> MonadicAst {
+        self.visit_file_mut(&mut ast);
+        MonadicAst::from(ast)
+    }
 }

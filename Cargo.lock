@@ -3,6 +3,15 @@
 version = 3
 
 [[package]]
+name = "monadicast"
+version = "0.1.0"
+dependencies = [
+ "prettyplease",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -39,15 +48,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "transpiler"
-version = "0.1.0"
-dependencies = [
- "prettyplease",
- "quote",
- "syn",
 ]
 
 [[package]]

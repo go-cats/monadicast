@@ -1,5 +1,7 @@
 #![crate_type = "lib"]
 #![crate_name = "monadicast"]
 
-pub mod binder;
+mod monad;
 mod passes;
+
+pub use monad::MonadicAst;
