@@ -41,8 +41,8 @@ impl VisitMut for TypeReplacer<'_> {
 }
 
 impl Pass for TypeReplacer<'_> {
-    fn bind(&mut self, mut ast: File) -> MonadicAst {
-        self.visit_file_mut(&mut ast);
-        MonadicAst::from(ast)
+    fn bind(&mut self, mut monad: MonadicAst) -> MonadicAst {
+        self.visit_file_mut(&mut monad.ast);
+        monad
     }
 }
