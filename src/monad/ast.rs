@@ -1,4 +1,5 @@
 use crate::passes::convert_ffi_types::TypeReplacer;
+use crate::passes::replace_raw_pointers::RawPointerSanitizer;
 use syn::{parse_file, Error, File};
 
 /// A monadic type wrapping a [syn::File] abstract syntax tree (AST) whose monadic
@@ -31,6 +32,12 @@ impl MonadicAst {
     /// equivalents, e.g. libc::c_int -> i32.
     pub fn convert_ffi_types(self) -> Self {
         TypeReplacer::new().bind(self)
+    }
+
+    /// Identifies declared raw pointers and replaces them with their safe Rust type
+    /// equivalent determined via static analysis on their access patterns or usages.
+    pub fn replace_raw_pointers(self) -> Self {
+        RawPointerSanitizer::default().bind(self)
     }
 }
 

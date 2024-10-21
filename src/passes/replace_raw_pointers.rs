@@ -1,6 +1,13 @@
 //! See https://immunant.com/blog/2023/03/lifting/ for more information on
 //! pointer derivation graph (PDG) matching.
 
+use crate::monad::ast::Pass;
+use crate::MonadicAst;
+use quote::quote;
+use std::collections::{BTreeMap, HashMap};
+use syn::visit::Visit;
+use syn::{FnArg, Ident, PatIdent, PatType, Type, TypePtr};
+
 /// Represents a permission that a raw pointer *p will need at the point in
 /// the program p is defined and used.
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -21,7 +28,7 @@ enum RustPointerType {
     ImmutableSlice,     // &[T]
     MutableSlice,       // &mut [T]
     UniqueSlicePointer, // Box<[T]>
-    Undefined           // ...for unsupported combinations
+    Undefined,          // ...for unsupported combinations
 }
 
 static ACCESSES: &[PointerAccess] = &[
@@ -33,7 +40,6 @@ static ACCESSES: &[PointerAccess] = &[
 ];
 
 impl PointerAccess {
-
     /// Returns the Rust safe pointer type corresponding to the given pointer access
     /// permissions, if any exists, and RustPointerType::Undefined otherwise.
     ///
@@ -46,14 +52,13 @@ impl PointerAccess {
     ///                           X     |      &[T]
     ///   X       X               X     |      &mut [T]
     ///           X       X       X     |      Box<[T]>
-    fn to_rust_type(permissions: &[PointerAccess]) -> RustPointerType {
-        let [has_write, has_unique, has_free, has_offset_add, has_offset_sub]: [bool; 5] =
-            ACCESSES
-                .iter()
-                .map(|access_type| permissions.contains(access_type))
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap();
+    fn determine_rust_type(permissions: &[PointerAccess]) -> RustPointerType {
+        let [has_write, has_unique, has_free, has_offset_add, has_offset_sub]: [bool; 5] = ACCESSES
+            .iter()
+            .map(|access_type| permissions.contains(access_type))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
         match (
             has_write,
             has_unique,
@@ -81,7 +86,40 @@ impl PointerAccess {
             (false, true, true, true, true)
             | (false, true, true, true, false)
             | (false, true, true, false, true) => RustPointerType::UniqueSlicePointer,
-            _ => RustPointerType::Undefined
+            _ => RustPointerType::Undefined,
         }
+    }
+}
+
+#[derive(Default)]
+pub struct RawPointerSanitizer {
+    pointers: HashMap<Ident, (TypePtr, Vec<PointerAccess>)>,
+}
+
+impl Visit<'_> for RawPointerSanitizer {
+    fn visit_fn_arg(&mut self, arg: &FnArg) {
+        if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
+            if let syn::Pat::Ident(identifier) = &**pat {
+                if let Type::Ptr(pointer) = &**ty {
+                    // TODO: remove debug log
+                    println!(
+                        "Found raw pointer argument: {}: {}",
+                        quote! { #identifier }.to_string(),
+                        quote! { #pointer }.to_string()
+                    );
+                    self.pointers
+                        .insert(identifier.ident.clone(), (pointer.clone(), Vec::new()));
+                }
+            }
+        }
+    }
+}
+
+impl Pass for RawPointerSanitizer {
+    fn bind(&mut self, mut monad: MonadicAst) -> MonadicAst {
+        self.visit_file(&mut monad.ast);
+        // TODO: remove debug log
+        self.pointers.iter().for_each(|(k, v)| println!("{:?}", k));
+        monad
     }
 }
