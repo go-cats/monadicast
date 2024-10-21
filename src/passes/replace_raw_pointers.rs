@@ -143,12 +143,12 @@ impl VisitMut for RawPointerSanitizer {
 impl Pass for RawPointerSanitizer {
     fn bind(&mut self, mut monad: MonadicAst) -> MonadicAst {
         // Identifies the function arguments and local variables that are raw pointers,
-        // then computing the access permissions needed from how they're used.
+        // TODO - then computing the access permissions needed from how they're used.
         self.visit_file(&mut monad.ast);
 
-        // Replaces the types of the raw pointer variables with their memory safe Rust
-        // equivalents, computed from their access permissions. Updates the accesses of
-        // the updated variables, as necessary.
+        // TODO - Replaces the types of the raw pointer variables with their memory safe Rust
+        //      - equivalents, computed from their access permissions. Updates the accesses of
+        //      - the updated variables, as necessary.
         self.visit_file_mut(&mut monad.ast);
 
         monad
