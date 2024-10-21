@@ -4,12 +4,12 @@
 use crate::monad::ast::Pass;
 use crate::MonadicAst;
 use quote::quote;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use syn::visit::Visit;
-use syn::{FnArg, Ident, PatIdent, PatType, Type, TypePtr};
+use syn::{FnArg, Ident, Local, Pat, PatIdent, PatType, Type, TypePtr};
 
-/// Represents a permission that a raw pointer *p will need at the point in
-/// the program p is defined and used.
+/// Represents a permission that a raw pointer *p will need at the point in the
+/// program p is defined and used.
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum PointerAccess {
     Write,     // The program writes to the pointee.
@@ -93,23 +93,57 @@ impl PointerAccess {
 
 #[derive(Default)]
 pub struct RawPointerSanitizer {
+    /// Keeps track of pointer variables and their access permissions.
     pointers: HashMap<Ident, (TypePtr, Vec<PointerAccess>)>,
 }
 
 impl Visit<'_> for RawPointerSanitizer {
+    /// Inspects function arguments and adds those that are raw pointer types to
+    /// the `pointers` map.
     fn visit_fn_arg(&mut self, arg: &FnArg) {
         if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
-            if let syn::Pat::Ident(identifier) = &**pat {
-                if let Type::Ptr(pointer) = &**ty {
-                    // TODO: remove debug log
-                    println!(
-                        "Found raw pointer argument: {}: {}",
-                        quote! { #identifier }.to_string(),
-                        quote! { #pointer }.to_string()
-                    );
-                    self.pointers
-                        .insert(identifier.ident.clone(), (pointer.clone(), Vec::new()));
-                }
+            if let (
+                Pat::Ident(PatIdent {
+                    mutability: _,
+                    ident,
+                    ..
+                }),
+                Type::Ptr(pointer),
+            ) = (&**pat, &**ty)
+            {
+                // TODO: remove debug log
+                println!(
+                    "Found raw pointer argument: {}: {}",
+                    quote! { #ident }.to_string(),
+                    quote! { #pointer }.to_string()
+                );
+                self.pointers
+                    .insert(ident.clone(), (pointer.clone(), Vec::new()));
+            }
+        }
+    }
+
+    /// Inspects local variable declarations and adds raw pointer type declarations
+    /// to the `pointers` map.
+    fn visit_local(&mut self, assignment: &'_ Local) {
+        if let Pat::Type(PatType { pat, ty, .. }) = &assignment.pat {
+            if let (
+                Pat::Ident(PatIdent {
+                    mutability: _,
+                    ident,
+                    ..
+                }),
+                Type::Ptr(pointer),
+            ) = (&**pat, &**ty)
+            {
+                // TODO: remove debug log
+                println!(
+                    "Found raw pointer declaration: {}: {}",
+                    quote! { #ident }.to_string(),
+                    quote! { #pointer }.to_string()
+                );
+                self.pointers
+                    .insert(ident.clone(), (pointer.clone(), Vec::new()));
             }
         }
     }
@@ -119,7 +153,7 @@ impl Pass for RawPointerSanitizer {
     fn bind(&mut self, mut monad: MonadicAst) -> MonadicAst {
         self.visit_file(&mut monad.ast);
         // TODO: remove debug log
-        self.pointers.iter().for_each(|(k, v)| println!("{:?}", k));
+        self.pointers.iter().for_each(|(k, _v)| println!("{:?}", k));
         monad
     }
 }
