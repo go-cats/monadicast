@@ -51,12 +51,12 @@ impl From<File> for MonadicAst {
     }
 }
 
-/// Analogous to the conventional `bind :: (M a) -> (a -> M b) -> (M b)`
-/// (or `>>=`) operation.
-///
-/// Receives a monadic AST wrapper `M a` and returns the result `M b` of applying the
-/// `bind()` method on the unwrapped AST `a`, where `M` is a `MonadicAst` and `a`,`b`
-/// are `syn::File` abstract syntax trees.
 pub trait Pass {
+    /// Analogous to the conventional `bind :: (M a) -> (a -> M b) -> (M b)`
+    /// (or `>>=`) operation.
+    ///
+    /// Receives a monadic AST wrapper `M a` and returns the result `M b` of applying the
+    /// `bind()` method on the unwrapped AST `a`, where `M` is a `MonadicAst` and `a`,`b`
+    /// are `syn::File` abstract syntax trees.
     fn bind(&mut self, monad: MonadicAst) -> MonadicAst;
 }
