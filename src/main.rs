@@ -4,7 +4,7 @@ use std::fs;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let content = fs::read_to_string("./example/input.rs")?;
-    let output = MonadicAst::from_content(&content)?
+    let output = MonadicAst::new(&content)?
         .convert_ffi_types()
         .replace_raw_pointers()
         .result();

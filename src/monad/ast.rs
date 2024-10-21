@@ -13,7 +13,7 @@ pub struct MonadicAst {
 
 impl MonadicAst {
     /// Returns a monadic value wrapping the constructed AST of the given Rust code.
-    pub fn from_content(file_content: &str) -> Result<Self, Error> {
+    pub fn new(file_content: &str) -> Result<Self, Error> {
         let ast = parse_file(file_content)?;
         Ok(Self { ast })
     }
