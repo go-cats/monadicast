@@ -3,9 +3,9 @@
 
 use crate::monad::ast::Pass;
 use crate::MonadicAst;
-use quote::quote;
 use std::collections::HashMap;
 use syn::visit::Visit;
+use syn::visit_mut::VisitMut;
 use syn::{FnArg, Ident, Local, Pat, PatIdent, PatType, Type, TypePtr};
 
 /// Represents a permission that a raw pointer *p will need at the point in the
@@ -95,65 +95,62 @@ impl PointerAccess {
 pub struct RawPointerSanitizer {
     /// Keeps track of pointer variables and their access permissions.
     pointers: HashMap<Ident, (TypePtr, Vec<PointerAccess>)>,
+    /// Mapping between the pointer variables and their memory safe equivalent types.
+    types: HashMap<Ident, RustPointerType>,
+}
+
+impl RawPointerSanitizer {
+    fn record_if_pointer(&mut self, pat: &Pat, ty: &Type) {
+        match (pat, ty) {
+            (
+                Pat::Ident(PatIdent {
+                    mutability: _,
+                    ident,
+                    ..
+                }),
+                Type::Ptr(pointer),
+            ) => {
+                self.pointers
+                    .insert(ident.clone(), (pointer.clone(), Vec::new()));
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Visit<'_> for RawPointerSanitizer {
-    /// Inspects function arguments and adds those that are raw pointer types to
-    /// the `pointers` map.
+    /// Inspects a function argument and adds it to the `pointers` map if it is a
+    /// raw pointer type.
     fn visit_fn_arg(&mut self, arg: &FnArg) {
         if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
-            if let (
-                Pat::Ident(PatIdent {
-                    mutability: _,
-                    ident,
-                    ..
-                }),
-                Type::Ptr(pointer),
-            ) = (&**pat, &**ty)
-            {
-                // TODO: remove debug log
-                println!(
-                    "Found raw pointer argument: {}: {}",
-                    quote! { #ident }.to_string(),
-                    quote! { #pointer }.to_string()
-                );
-                self.pointers
-                    .insert(ident.clone(), (pointer.clone(), Vec::new()));
-            }
+            self.record_if_pointer(&**pat, &**ty)
         }
     }
 
-    /// Inspects local variable declarations and adds raw pointer type declarations
-    /// to the `pointers` map.
-    fn visit_local(&mut self, assignment: &'_ Local) {
+    /// Inspects a local variable declaration and adds it to the `pointers` map if it
+    /// is a raw pointer type declaration.
+    fn visit_local(&mut self, assignment: &Local) {
         if let Pat::Type(PatType { pat, ty, .. }) = &assignment.pat {
-            if let (
-                Pat::Ident(PatIdent {
-                    mutability: _,
-                    ident,
-                    ..
-                }),
-                Type::Ptr(pointer),
-            ) = (&**pat, &**ty)
-            {
-                // TODO: remove debug log
-                println!(
-                    "Found raw pointer declaration: {}: {}",
-                    quote! { #ident }.to_string(),
-                    quote! { #pointer }.to_string()
-                );
-                self.pointers
-                    .insert(ident.clone(), (pointer.clone(), Vec::new()));
-            }
+            self.record_if_pointer(&**pat, &**ty)
         }
     }
+}
+
+impl VisitMut for RawPointerSanitizer {
+    // TODO
 }
 
 impl Pass for RawPointerSanitizer {
     fn bind(&mut self, mut monad: MonadicAst) -> MonadicAst {
+        // Identifies the function arguments and local variables that are raw pointers,
+        // then computing the access permissions needed from how they're used.
         self.visit_file(&mut monad.ast);
-        // TODO: remove debug log
-        self.pointers.iter().for_each(|(k, _v)| println!("{:?}", k));
+
+        // Replaces the types of the raw pointer variables with their memory safe Rust
+        // equivalents, computed from their access permissions. Updates the accesses of
+        // the updated variables, as necessary.
+        self.visit_file_mut(&mut monad.ast);
+
         monad
     }
 }
