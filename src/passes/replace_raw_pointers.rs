@@ -3,10 +3,11 @@
 
 use crate::monad::ast::Pass;
 use crate::MonadicAst;
+use quote::quote;
 use std::collections::HashMap;
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
-use syn::{FnArg, Ident, Local, Pat, PatIdent, PatType, Type, TypePtr};
+use syn::{ExprMethodCall, FnArg, Ident, Local, Pat, PatIdent, PatType, Type, TypePtr};
 
 /// Represents a permission that a raw pointer *p will need at the point in the
 /// program p is defined and used.
@@ -125,6 +126,7 @@ impl Visit<'_> for RawPointerSanitizer {
         if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
             self.record_if_pointer(&**pat, &**ty)
         }
+        syn::visit::visit_fn_arg(self, arg)
     }
 
     /// Inspects a local variable declaration and adds it to the `pointers` map if it
@@ -133,6 +135,19 @@ impl Visit<'_> for RawPointerSanitizer {
         if let Pat::Type(PatType { pat, ty, .. }) = &assignment.pat {
             self.record_if_pointer(&**pat, &**ty)
         }
+        syn::visit::visit_local(self, assignment)
+    }
+
+    /// Inspects a method call, updating the pointer accesses mapping if the call is a
+    /// raw pointer access.
+    fn visit_expr_method_call(&mut self, expr: &ExprMethodCall) {
+        let ExprMethodCall {
+            method, receiver, ..
+        } = expr;
+        println!("Visit - {}", quote! { #expr }.to_string());
+        println!(" -- {}", quote! { #method }.to_string());
+        println!(" -! {}", quote! { #receiver }.to_string());
+        syn::visit::visit_expr_method_call(self, expr)
     }
 }
 
