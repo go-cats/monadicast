@@ -10,6 +10,7 @@ pub struct WhileLoopReplacer {}
 impl WhileLoopReplacer {
     fn record_if_whileloop(&self, wloop: &ExprWhile) {
         // if we see a while loop, log it
+        println!("{:?}", wloop);
         println!("Found a while loop");
     }
 }
