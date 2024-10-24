@@ -1,5 +1,6 @@
 use crate::passes::convert_ffi_types::TypeReplacer;
 use crate::passes::replace_raw_pointers::RawPointerSanitizer;
+use crate::passes::replace_while_loop::WhileLoopReplacer;
 use syn::{parse_file, Error, File};
 
 /// A monadic type wrapping a [syn::File] abstract syntax tree (AST) whose monadic
@@ -39,6 +40,11 @@ impl MonadicAst {
     pub fn replace_raw_pointers(self) -> Self {
         RawPointerSanitizer::default().bind(self)
     }
+
+
+    /// Identifies un-idiomatic while loop and replaces them with their safe Rust for-loop
+    /// equivalent determined via static analysis on their accesses and usages.
+    pub fn replace_while_loop(self) -> Self { WhileLoopReplacer::default().bind(self) }
 }
 
 impl From<File> for MonadicAst {
