@@ -7,7 +7,7 @@ use quote::quote;
 use std::collections::HashMap;
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
-use syn::{ExprMethodCall, FnArg, Ident, Local, Pat, PatIdent, PatType, Type, TypePtr};
+use syn::{ExprMethodCall, File, FnArg, Ident, Local, Pat, PatIdent, PatType, Type, TypePtr};
 
 /// Represents a permission that a raw pointer *p will need at the point in the
 /// program p is defined and used.
@@ -93,10 +93,16 @@ impl PointerAccess {
 }
 
 #[derive(Default)]
-enum VariablesTypeMap {
+enum TypeMappingStateMachine {
+    /// Still identifying usages of raw pointers, or the process of mapping them
+    /// to their appropriate Rust safe reference type hasn't started yet.
     #[default]
     Uninitialized,
+    /// Currently in the process of mapping identifiers to their appropriate Rust
+    /// safe reference types.
     Computing(HashMap<Ident, RustPointerType>),
+    /// All raw pointer identifiers have been mapped to their appropriate Rust
+    /// safe reference type.
     Initialized(HashMap<Ident, RustPointerType>)
 }
 
@@ -105,7 +111,7 @@ pub struct RawPointerSanitizer {
     /// Keeps track of pointer variables and their access permissions.
     pointers: HashMap<Ident, (TypePtr, Vec<PointerAccess>)>,
     /// Mapping between the pointer variables and their memory safe equivalent types.
-    types: VariablesTypeMap
+    types: TypeMappingStateMachine
 }
 
 impl RawPointerSanitizer {
@@ -123,6 +129,27 @@ impl RawPointerSanitizer {
                     .insert(ident.clone(), (pointer.clone(), Vec::new()));
             }
             _ => {}
+        }
+    }
+
+    fn identify_raw_pointer_args(&mut self, ast: &mut File) {
+        self.visit_file(ast);
+        self.types = TypeMappingStateMachine::Computing(HashMap::new())
+    }
+
+    fn compute_equivalent_safe_types(&mut self) {
+        // TODO: compute type equivalents
+
+        // Advance state from `Computing` to `Initialized`.
+        let old_state = std::mem::replace(&mut self.types, TypeMappingStateMachine::Uninitialized);
+        match old_state{
+            TypeMappingStateMachine::Computing(map) => {
+                self.types = TypeMappingStateMachine::Initialized(map)
+            },
+            _ => {
+                let _ = std::mem::replace(&mut self.types, old_state);
+                panic!("Must be in Computing state".into())
+            }
         }
     }
 }
@@ -165,9 +192,8 @@ impl VisitMut for RawPointerSanitizer {
 
 impl Pass for RawPointerSanitizer {
     fn bind(&mut self, mut monad: MonadicAst) -> MonadicAst {
-        // Identifies the function arguments and local variables that are raw pointers,
-        // TODO - then computing the access permissions needed from how they're used.
-        self.visit_file(&mut monad.ast);
+        self.identify_raw_pointer_args(&mut monad.ast);
+        self.compute_equivalent_safe_types();
 
         // TODO - Replaces the types of the raw pointer variables with their memory safe Rust
         //      - equivalents, computed from their access permissions. Updates the accesses of
