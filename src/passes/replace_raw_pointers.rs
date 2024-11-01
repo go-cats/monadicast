@@ -93,11 +93,19 @@ impl PointerAccess {
 }
 
 #[derive(Default)]
+enum VariablesTypeMap {
+    #[default]
+    Uninitialized,
+    Computing(HashMap<Ident, RustPointerType>),
+    Initialized(HashMap<Ident, RustPointerType>)
+}
+
+#[derive(Default)]
 pub struct RawPointerSanitizer {
     /// Keeps track of pointer variables and their access permissions.
     pointers: HashMap<Ident, (TypePtr, Vec<PointerAccess>)>,
     /// Mapping between the pointer variables and their memory safe equivalent types.
-    types: HashMap<Ident, RustPointerType>,
+    types: VariablesTypeMap
 }
 
 impl RawPointerSanitizer {
