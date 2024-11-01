@@ -1,7 +1,7 @@
 use crate::monad::ast::{MonadicAst, Pass};
 use quote::ToTokens;
 use std::collections::HashMap;
-use syn::{visit_mut::VisitMut, Type};
+use syn::{visit_mut::VisitMut, Signature, Type};
 
 static RULES: &[(&str, &str)] = &[
     ("libc::c_int", "i32"),
@@ -26,6 +26,15 @@ impl TypeReplacer {
 }
 
 impl VisitMut for TypeReplacer {
+    fn visit_signature_mut(&mut self, signature: &mut Signature) {
+        // The Rust code generated from this AST rewrite pass will not have C FFI types
+        // and won't be called from a C context, so we can remove `extern "C"` binary
+        // interface specifier from the method signature
+        let Signature { abi, .. } = signature;
+        *abi = None;
+        syn::visit_mut::visit_signature_mut(self, signature)
+    }
+
     fn visit_type_mut(&mut self, ty: &mut Type) {
         if let Type::Path(type_path) = ty {
             let type_string = type_path.to_token_stream().to_string().replace(" ", "");

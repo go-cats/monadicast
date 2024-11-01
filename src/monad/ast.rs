@@ -41,10 +41,11 @@ impl MonadicAst {
         RawPointerSanitizer::default().bind(self)
     }
 
-
     /// Identifies un-idiomatic while loop and replaces them with their safe Rust for-loop
     /// equivalent determined via static analysis on their accesses and usages.
-    pub fn replace_while_loop(self) -> Self { WhileLoopReplacer::default().bind(self) }
+    pub fn replace_while_loop(self) -> Self {
+        WhileLoopReplacer::default().bind(self)
+    }
 }
 
 impl From<File> for MonadicAst {
