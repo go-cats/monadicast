@@ -8,13 +8,13 @@ use std::collections::{HashMap, HashSet};
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
 use syn::{
-    Expr, ExprMethodCall, ExprPath, File, FnArg, Ident, Local, Pat, PatIdent, PatType, Type,
-    TypePtr,
+    Expr, ExprAssign, ExprMethodCall, ExprPath, ExprUnary, File, FnArg, Ident, Local, Pat,
+    PatIdent, PatType, Type, TypePtr, UnOp,
 };
 
 /// Represents a permission that a raw pointer *p will need at the point in the
 /// program p is defined and used.
-#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 enum PointerAccess {
     Write,     // The program writes to the pointee.
     Unique,    // The pointer is the only way to access the given memory location.
@@ -181,6 +181,50 @@ impl Visit<'_> for RawPointerSanitizer {
             self.record_if_pointer(&**pat, &**ty)
         }
         syn::visit::visit_local(self, assignment)
+    }
+
+    fn visit_expr_assign(&mut self, i: &'_ ExprAssign) {
+        fn get_pointer_accesses_mut<'a, 'b>(
+            receiver: &'a Box<Expr>,
+            pointers: &'b mut HashMap<Ident, (TypePtr, HashSet<PointerAccess>)>,
+        ) -> Option<&'b mut HashSet<PointerAccess>> {
+            match receiver.as_ref() {
+                Expr::Path(ExprPath { qself, path, .. }) => {
+                    if qself.is_some() {
+                        return None;
+                    }
+                    println!("herrrr");
+                    let ident = &path.segments.last().unwrap().ident;
+                    pointers
+                        .get_mut(ident)
+                        .map_or_else(|| None, |(_, map)| Some(map))
+                }
+                _ => None,
+            }
+        }
+
+        let ExprAssign { left, right, .. } = i;
+
+        // lvalue pointer access.
+        // * (p (.offset()))
+        if let Expr::Unary(ExprUnary { op, expr, .. }) = left.as_ref() {
+            println!("unary");
+            if let UnOp::Deref(_) = op {
+                println!("deref");
+                if let Expr::MethodCall(ExprMethodCall {
+                    method, receiver, ..
+                }) = expr.as_ref()
+                {
+                    println!("method call {}", quote! { #method });
+                    if let Some(access_set) = get_pointer_accesses_mut(receiver, &mut self.pointers)
+                    {
+                        // TODO(eyoon): If method == offset: pointers.get_mut(ident) access insert offset
+                        access_set.insert(PointerAccess::Write);
+                        println!("Lvalue access {:?}", access_set);
+                    }
+                }
+            }
+        }
     }
 
     /// Inspects a method call, updating the pointer accesses mapping if the call is a
