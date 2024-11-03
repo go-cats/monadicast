@@ -107,10 +107,10 @@ impl RawPointerSanitizer {
         match (pat, ty) {
             (
                 Pat::Ident(PatIdent {
-                               mutability: _,
-                               ident,
-                               ..
-                           }),
+                    mutability: _,
+                    ident,
+                    ..
+                }),
                 Type::Ptr(pointer),
             ) => {
                 self.pointers
@@ -193,22 +193,20 @@ impl Visit<'_> for RawPointerSanitizer {
         ) -> Option<&'vis mut HashSet<PointerAccess>> {
             match input_expr.as_ref() {
                 Expr::MethodCall(ExprMethodCall {
-                                     method: _, receiver, ..
-                                 }) =>
-                    {
-                        access_set_if_raw_ptr(receiver, pointers)
-                    }
-                _ => None
+                    method: _,
+                    receiver,
+                    ..
+                }) => access_set_if_raw_ptr(receiver, pointers),
+                _ => None,
             }
         }
 
         // Identify lvalue raw pointer accesses.
         expr_if_unary_deref(&assign.left).map(|expr| {
-            access_set_if_pointer_access(expr, &mut self.pointers)
-                .map(|access_set| {
-                    // *p = ...
-                    access_set.insert(PointerAccess::Write);
-                })
+            access_set_if_pointer_access(expr, &mut self.pointers).map(|access_set| {
+                // *p = ...
+                access_set.insert(PointerAccess::Write);
+            })
         });
 
         syn::visit::visit_expr_assign(self, assign)
@@ -217,27 +215,29 @@ impl Visit<'_> for RawPointerSanitizer {
     /// Inspects method calls, updating the pointer access map if a raw pointer
     /// offset access is identified.
     fn visit_expr_method_call(&mut self, i: &'_ ExprMethodCall) {
-        let ExprMethodCall { method, receiver, .. } = i;
-        access_set_if_raw_ptr(receiver, &mut self.pointers)
-            .map(|access_set| {
-                if is_offset(method) {
-                    access_set.insert(PointerAccess::Offset);
-                }
-            });
+        let ExprMethodCall {
+            method, receiver, ..
+        } = i;
+
+        access_set_if_raw_ptr(receiver, &mut self.pointers).map(|access_set| {
+            if is_offset(method) {
+                access_set.insert(PointerAccess::Offset);
+            }
+        });
 
         syn::visit::visit_expr_method_call(self, i)
     }
 }
 
-
 impl VisitMut for RawPointerSanitizer {
     // TODO
 }
 
-
 /// If the given receiver `p` exists in the pointer map, return a mutable reference
 /// to its access set pointers[p].1
-fn access_set_if_raw_ptr<'expr, 'vis>(receiver: &'expr Box<Expr>, pointers: &'vis mut HashMap<Ident, (TypePtr, HashSet<PointerAccess>)>,
+fn access_set_if_raw_ptr<'expr, 'vis>(
+    receiver: &'expr Box<Expr>,
+    pointers: &'vis mut HashMap<Ident, (TypePtr, HashSet<PointerAccess>)>,
 ) -> Option<&'vis mut HashSet<PointerAccess>> {
     match receiver.as_ref() {
         Expr::Path(ExprPath { qself, path, .. }) => {
@@ -245,11 +245,9 @@ fn access_set_if_raw_ptr<'expr, 'vis>(receiver: &'expr Box<Expr>, pointers: &'vi
                 return None;
             }
             let ident = &path.segments.last().unwrap().ident;
-            pointers.get_mut(ident).map(|(_, access_set)| {
-                access_set
-            })
+            pointers.get_mut(ident).map(|(_, access_set)| access_set)
         }
-        _ => None
+        _ => None,
     }
 }
 
