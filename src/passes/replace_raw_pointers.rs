@@ -7,7 +7,10 @@ use quote::quote;
 use std::collections::{HashMap, HashSet};
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
-use syn::{ExprMethodCall, File, FnArg, Ident, Local, Pat, PatIdent, PatType, Type, TypePtr};
+use syn::{
+    Expr, ExprMethodCall, ExprPath, File, FnArg, Ident, Local, Pat, PatIdent, PatType, Type,
+    TypePtr,
+};
 
 /// Represents a permission that a raw pointer *p will need at the point in the
 /// program p is defined and used.
@@ -103,7 +106,7 @@ enum TypeMappingStateMachine {
     Computing(HashMap<Ident, RustPointerType>),
     /// All raw pointer identifiers have been mapped to their appropriate Rust
     /// safe reference type.
-    Initialized(HashMap<Ident, RustPointerType>)
+    Initialized(HashMap<Ident, RustPointerType>),
 }
 
 #[derive(Default)]
@@ -111,7 +114,7 @@ pub struct RawPointerSanitizer {
     /// Keeps track of pointer variables and their access permissions.
     pointers: HashMap<Ident, (TypePtr, HashSet<PointerAccess>)>,
     /// Mapping between the pointer variables and their memory safe equivalent types.
-    types: TypeMappingStateMachine
+    types: TypeMappingStateMachine,
 }
 
 impl RawPointerSanitizer {
@@ -134,7 +137,14 @@ impl RawPointerSanitizer {
 
     fn identify_raw_pointer_args(&mut self, ast: &mut File) {
         self.visit_file(ast);
-        self.types = TypeMappingStateMachine::Computing(HashMap::new())
+
+        // Advance state from 'Uninitialized' to 'Computing'
+        match self.types {
+            TypeMappingStateMachine::Uninitialized => {
+                self.types = TypeMappingStateMachine::Computing(HashMap::new())
+            }
+            _ => panic!("Must be in Uninitialized state"),
+        }
     }
 
     fn compute_equivalent_safe_types(&mut self) {
@@ -142,13 +152,13 @@ impl RawPointerSanitizer {
 
         // Advance state from `Computing` to `Initialized`.
         let old_state = std::mem::replace(&mut self.types, TypeMappingStateMachine::Uninitialized);
-        match old_state{
+        match old_state {
             TypeMappingStateMachine::Computing(map) => {
                 self.types = TypeMappingStateMachine::Initialized(map)
-            },
+            }
             _ => {
                 let _ = std::mem::replace(&mut self.types, old_state);
-                panic!("Must be in Computing state".into())
+                panic!("Must be in Computing state")
             }
         }
     }
@@ -179,9 +189,22 @@ impl Visit<'_> for RawPointerSanitizer {
         let ExprMethodCall {
             method, receiver, ..
         } = expr;
+        // debug stuff ahaha
         println!("Visit - {}", quote! { #expr }.to_string());
         println!(" -- {}", quote! { #method }.to_string());
         println!(" -! {}", quote! { #receiver }.to_string());
+
+        // TODO(eyoon): Need to correctly handle variable shadowing.
+        //              (Or can we assume generated code won't have shadowed vars?)
+        if let Expr::Path(ExprPath { attrs, qself, path }) = receiver.as_ref() {
+            if qself.is_none() {
+                let ident = &path.segments.last().unwrap().ident;
+                if self.pointers.contains_key(ident) {
+                    println!(" --- raw pointer ident: {}", quote! { #ident}.to_string())
+                }
+            }
+        }
+
         syn::visit::visit_expr_method_call(self, expr)
     }
 }
