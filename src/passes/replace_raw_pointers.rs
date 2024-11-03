@@ -16,11 +16,10 @@ use syn::{
 /// program p is defined and used.
 #[derive(Copy, Clone, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 enum PointerAccess {
-    Write,     // The program writes to the pointee.
-    Unique,    // The pointer is the only way to access the given memory location.
-    Free,      // The pointer will eventually be passed to free.
-    OffsetAdd, // We'll add an offset to the pointer, e.g. array element access.
-    OffsetSub, // We'll subtract an offset to the pointer.
+    Write,  // The program writes to the pointee.
+    Unique, // The pointer is the only way to access the given memory location.
+    Free,   // The pointer will eventually be passed to free.
+    Offset, // We'll add/subtract an offset to the pointer, e.g. array element access.
 }
 
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -39,8 +38,7 @@ static ACCESSES: &[PointerAccess] = &[
     PointerAccess::Write,
     PointerAccess::Unique,
     PointerAccess::Free,
-    PointerAccess::OffsetAdd,
-    PointerAccess::OffsetSub,
+    PointerAccess::Offset,
 ];
 
 impl PointerAccess {
@@ -57,39 +55,27 @@ impl PointerAccess {
     ///   X       X               X     |      &mut [T]
     ///           X       X       X     |      Box<[T]>
     fn determine_rust_type(permissions: &[PointerAccess]) -> RustPointerType {
-        let [has_write, has_unique, has_free, has_offset_add, has_offset_sub]: [bool; 5] = ACCESSES
+        let [has_write, has_unique, has_free, has_offset]: [bool; 4] = ACCESSES
             .iter()
             .map(|access_type| permissions.contains(access_type))
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();
-        match (
-            has_write,
-            has_unique,
-            has_free,
-            has_offset_add,
-            has_offset_sub,
-        ) {
+        match (has_write, has_unique, has_free, has_offset) {
             // &T
-            (false, false, false, false, false) => RustPointerType::ImmutableReference,
+            (false, false, false, false) => RustPointerType::ImmutableReference,
             // Write + Unique -> &mut T
-            (true, true, false, false, false) => RustPointerType::MutableReference,
+            (true, true, false, false) => RustPointerType::MutableReference,
             // Write -> &Cell<T>
-            (true, false, false, false, false) => RustPointerType::CellReference,
+            (true, false, false, false) => RustPointerType::CellReference,
             // Unique + Free -> Box<T>
-            (false, true, true, false, false) => RustPointerType::UniquePointer,
+            (false, true, true, false) => RustPointerType::UniquePointer,
             // Offset -> &[T]
-            (false, false, false, true, true)
-            | (false, false, false, true, false)
-            | (false, false, false, false, true) => RustPointerType::ImmutableSlice,
+            (false, false, false, true) => RustPointerType::ImmutableSlice,
             // Write + Unique + Offset -> &mut [T]
-            (true, true, false, true, true)
-            | (true, true, false, true, false)
-            | (true, true, false, false, true) => RustPointerType::MutableSlice,
+            (true, true, false, true) => RustPointerType::MutableSlice,
             // Unique + Free + Offset -> Box<T>
-            (false, true, true, true, true)
-            | (false, true, true, true, false)
-            | (false, true, true, false, true) => RustPointerType::UniqueSlicePointer,
+            (false, true, true, true) => RustPointerType::UniqueSlicePointer,
             _ => RustPointerType::Undefined,
         }
     }
@@ -183,47 +169,71 @@ impl Visit<'_> for RawPointerSanitizer {
         syn::visit::visit_local(self, assignment)
     }
 
-    fn visit_expr_assign(&mut self, i: &'_ ExprAssign) {
-        fn get_pointer_accesses_mut<'a, 'b>(
-            receiver: &'a Box<Expr>,
-            pointers: &'b mut HashMap<Ident, (TypePtr, HashSet<PointerAccess>)>,
-        ) -> Option<&'b mut HashSet<PointerAccess>> {
-            match receiver.as_ref() {
-                Expr::Path(ExprPath { qself, path, .. }) => {
-                    if qself.is_some() {
-                        return None;
-                    }
-                    println!("herrrr");
-                    let ident = &path.segments.last().unwrap().ident;
-                    pointers
-                        .get_mut(ident)
-                        .map_or_else(|| None, |(_, map)| Some(map))
-                }
-                _ => None,
-            }
-        }
-
-        let ExprAssign { left, right, .. } = i;
-
+    /// Inspects assignment instructions for lvalue pointer writes and rvalues that are
+    /// dereferenced raw pointer values.
+    ///
+    /// Assumptions: (which are probably incorrect)
+    /// - Raw pointers are never directly used as rvalues, and any rvalue expression will
+    ///   contain a pointer dereference if it contains a raw pointer value.
+    /// - Raw pointer variables are not reassigned to a different pointer when in lvalue
+    ///   expressions.
+    fn visit_expr_assign(&mut self, assign: &'_ ExprAssign) {
         // lvalue pointer access.
         // * (p (.offset()))
-        if let Expr::Unary(ExprUnary { op, expr, .. }) = left.as_ref() {
-            println!("unary");
-            if let UnOp::Deref(_) = op {
-                println!("deref");
-                if let Expr::MethodCall(ExprMethodCall {
-                    method, receiver, ..
-                }) = expr.as_ref()
-                {
-                    println!("method call {}", quote! { #method });
-                    if let Some(access_set) = get_pointer_accesses_mut(receiver, &mut self.pointers)
-                    {
-                        // TODO(eyoon): If method == offset: pointers.get_mut(ident) access insert offset
-                        access_set.insert(PointerAccess::Write);
-                        println!("Lvalue access {:?}", access_set);
+        expr_if_unary_deref(&assign.left).map(|expr| {
+            access_set_if_pointer_access(expr, &mut self.pointers).map(|(method, access_set)| {
+                println!("{}", quote! { #method }.to_string());
+                println!("{}", method.to_string());
+
+                access_set.insert(PointerAccess::Write);
+                if is_offset(method) {
+                    access_set.insert(PointerAccess::Offset);
+                }
+                println!("Lvalue access {:?}", access_set);
+            })
+        });
+
+        // rvalue pointer access
+        expr_if_unary_deref(&assign.right).map(|expr| {
+            access_set_if_pointer_access(expr, &mut self.pointers).map(|(method, access_set)| {
+                if is_offset(method) {
+                    access_set.insert(PointerAccess::Offset);
+                }
+                println!("Rvalue access {:?}", access_set);
+            })
+        });
+
+        fn access_set_if_pointer_access<'expr, 'sel>(
+            input_expr: &'expr Box<Expr>,
+            pointers: &'sel mut HashMap<Ident, (TypePtr, HashSet<PointerAccess>)>,
+        ) -> Option<(&'expr Ident, &'sel mut HashSet<PointerAccess>)> {
+            if let Expr::MethodCall(ExprMethodCall {
+                method, receiver, ..
+            }) = input_expr.as_ref()
+            {
+                return match receiver.as_ref() {
+                    Expr::Path(ExprPath { qself, path, .. }) => {
+                        if qself.is_some() {
+                            return None;
+                        }
+                        let ident = &path.segments.last().unwrap().ident;
+                        pointers
+                            .get_mut(ident)
+                            .map_or_else(|| None, |(_, map)| Some((method, map)))
                     }
+                    _ => None,
+                };
+            }
+            None
+        }
+
+        fn expr_if_unary_deref(input_expr: &Box<Expr>) -> Option<&Box<Expr>> {
+            if let Expr::Unary(ExprUnary { op, expr, .. }) = input_expr.as_ref() {
+                if let UnOp::Deref(_) = op {
+                    return Some(expr);
                 }
             }
+            None
         }
     }
 
@@ -255,6 +265,10 @@ impl Visit<'_> for RawPointerSanitizer {
 
 impl VisitMut for RawPointerSanitizer {
     // TODO
+}
+
+fn is_offset(ident: &Ident) -> bool {
+    ident.to_string().eq("offset")
 }
 
 impl Pass for RawPointerSanitizer {
