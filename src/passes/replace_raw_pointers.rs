@@ -3,7 +3,6 @@
 
 use crate::monad::ast::Pass;
 use crate::MonadicAst;
-use quote::quote;
 use std::collections::{HashMap, HashSet};
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
@@ -124,6 +123,16 @@ impl RawPointerSanitizer {
     fn identify_raw_pointer_args(&mut self, ast: &mut File) {
         self.visit_file(ast);
 
+        // TODO(eyoon): delete debug log
+        println!(
+            "{:?}",
+            &self
+                .pointers
+                .iter()
+                .map(|(id, (_, set))| (id.to_string(), set))
+                .collect::<Vec<_>>()
+        );
+
         // Advance state from 'Uninitialized' to 'Computing'
         match self.types {
             TypeMappingStateMachine::Uninitialized => {
@@ -169,8 +178,7 @@ impl Visit<'_> for RawPointerSanitizer {
         syn::visit::visit_local(self, assignment)
     }
 
-    /// Inspects assignment instructions for lvalue pointer writes and rvalues that are
-    /// dereferenced raw pointer values.
+    /// Inspects assignment instructions for lvalue pointer writes
     ///
     /// Assumptions: (which are probably incorrect)
     /// - Raw pointers are never directly used as rvalues, and any rvalue expression will
@@ -178,55 +186,6 @@ impl Visit<'_> for RawPointerSanitizer {
     /// - Raw pointer variables are not reassigned to a different pointer when in lvalue
     ///   expressions.
     fn visit_expr_assign(&mut self, assign: &'_ ExprAssign) {
-        // lvalue pointer access.
-        // * (p (.offset()))
-        expr_if_unary_deref(&assign.left).map(|expr| {
-            access_set_if_pointer_access(expr, &mut self.pointers).map(|(method, access_set)| {
-                println!("{}", quote! { #method }.to_string());
-                println!("{}", method.to_string());
-
-                access_set.insert(PointerAccess::Write);
-                if is_offset(method) {
-                    access_set.insert(PointerAccess::Offset);
-                }
-                println!("Lvalue access {:?}", access_set);
-            })
-        });
-
-        // rvalue pointer access
-        expr_if_unary_deref(&assign.right).map(|expr| {
-            access_set_if_pointer_access(expr, &mut self.pointers).map(|(method, access_set)| {
-                if is_offset(method) {
-                    access_set.insert(PointerAccess::Offset);
-                }
-                println!("Rvalue access {:?}", access_set);
-            })
-        });
-
-        fn access_set_if_pointer_access<'expr, 'sel>(
-            input_expr: &'expr Box<Expr>,
-            pointers: &'sel mut HashMap<Ident, (TypePtr, HashSet<PointerAccess>)>,
-        ) -> Option<(&'expr Ident, &'sel mut HashSet<PointerAccess>)> {
-            if let Expr::MethodCall(ExprMethodCall {
-                method, receiver, ..
-            }) = input_expr.as_ref()
-            {
-                return match receiver.as_ref() {
-                    Expr::Path(ExprPath { qself, path, .. }) => {
-                        if qself.is_some() {
-                            return None;
-                        }
-                        let ident = &path.segments.last().unwrap().ident;
-                        pointers
-                            .get_mut(ident)
-                            .map_or_else(|| None, |(_, map)| Some((method, map)))
-                    }
-                    _ => None,
-                };
-            }
-            None
-        }
-
         fn expr_if_unary_deref(input_expr: &Box<Expr>) -> Option<&Box<Expr>> {
             if let Expr::Unary(ExprUnary { op, expr, .. }) = input_expr.as_ref() {
                 if let UnOp::Deref(_) = op {
@@ -235,36 +194,70 @@ impl Visit<'_> for RawPointerSanitizer {
             }
             None
         }
+
+        // Identify lvalue raw pointer accesses.
+        expr_if_unary_deref(&assign.left).map(|expr| {
+            access_set_if_pointer_access(expr, &mut self.pointers).map(|(method, access_set)| {
+                // *p = ...
+                access_set.insert(PointerAccess::Write);
+            })
+        });
+
+        syn::visit::visit_expr_assign(self, assign)
     }
 
-    /// Inspects a method call, updating the pointer accesses mapping if the call is a
-    /// raw pointer access.
-    fn visit_expr_method_call(&mut self, expr: &ExprMethodCall) {
-        let ExprMethodCall {
+    /// Identify pointer offset accesses.
+    fn visit_expr_method_call(&mut self, i: &'_ ExprMethodCall) {
+        if let ExprMethodCall {
             method, receiver, ..
-        } = expr;
-        // debug stuff ahaha
-        println!("Visit - {}", quote! { #expr }.to_string());
-        println!(" -- {}", quote! { #method }.to_string());
-        println!(" -! {}", quote! { #receiver }.to_string());
-
-        // TODO(eyoon): Need to correctly handle variable shadowing.
-        //              (Or can we assume generated code won't have shadowed vars?)
-        if let Expr::Path(ExprPath { attrs, qself, path }) = receiver.as_ref() {
-            if qself.is_none() {
-                let ident = &path.segments.last().unwrap().ident;
-                if self.pointers.contains_key(ident) {
-                    println!(" --- raw pointer ident: {}", quote! { #ident}.to_string())
+        } = i
+        {
+            match receiver.as_ref() {
+                Expr::Path(ExprPath { qself, path, .. }) => {
+                    if qself.is_some() {
+                        return;
+                    }
+                    let ident = &path.segments.last().unwrap().ident;
+                    self.pointers.get_mut(ident).map(|(_, map)| {
+                        if is_offset(method) {
+                            map.insert(PointerAccess::Offset);
+                        }
+                    });
                 }
+                _ => {}
             }
         }
 
-        syn::visit::visit_expr_method_call(self, expr)
+        syn::visit::visit_expr_method_call(self, i)
     }
 }
 
 impl VisitMut for RawPointerSanitizer {
     // TODO
+}
+
+fn access_set_if_pointer_access<'expr, 'sel>(
+    input_expr: &'expr Box<Expr>,
+    pointers: &'sel mut HashMap<Ident, (TypePtr, HashSet<PointerAccess>)>,
+) -> Option<(&'expr Ident, &'sel mut HashSet<PointerAccess>)> {
+    if let Expr::MethodCall(ExprMethodCall {
+        method, receiver, ..
+    }) = input_expr.as_ref()
+    {
+        return match receiver.as_ref() {
+            Expr::Path(ExprPath { qself, path, .. }) => {
+                if qself.is_some() {
+                    return None;
+                }
+                let ident = &path.segments.last().unwrap().ident;
+                pointers
+                    .get_mut(ident)
+                    .map_or_else(|| None, |(_, map)| Some((method, map)))
+            }
+            _ => None,
+        };
+    }
+    None
 }
 
 fn is_offset(ident: &Ident) -> bool {
