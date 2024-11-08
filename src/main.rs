@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let output = MonadicAst::new(&content)?
         .convert_ffi_types()
         .replace_raw_pointers()
-        // .replace_while_loop()
+        .replace_while_loop()
         .result();
 
     fs::write("./example/output.rs", output)?;
