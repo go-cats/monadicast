@@ -1,11 +1,13 @@
 use crate::monad::ast::Pass;
 use crate::MonadicAst;
+use prettyplease::unparse;
+use quote::ToTokens;
 use std::collections::HashMap;
-use syn::{Expr, ExprLit, ExprWhile, Pat, Stmt, visit_mut::VisitMut, visit::Visit};
+use syn::{visit::Visit, visit_mut::VisitMut, Expr, ExprLit, ExprWhile, Lit, LitInt, Pat, Stmt};
 
 #[derive(Default)]
 pub struct WhileLoopReplacer {
-    loop_vars: HashMap<String, ExprLit>, // Properly declare the field within the struct
+    loop_vars: HashMap<String, i32>, // Properly declare the field within the struct
 }
 
 impl WhileLoopReplacer {
@@ -27,63 +29,74 @@ impl Visit<'_> for WhileLoopReplacer {
 impl VisitMut for WhileLoopReplacer {
     fn visit_stmt_mut(&mut self, stmt: &mut Stmt) {
         // First, check if the statement is a local variable assignment (e.g., `let mut i = 1`)
+        // println!("STMT: {:?}\n\n", stmt);
+        // get the loop variable and the value that it is initialized to
         if let Stmt::Local(local) = stmt {
+            println!("LOCAL: {:?}\n\n", local.pat);
             if let Some(local_init) = local.init.as_ref() {
-                if let Expr::Lit(lit) = &*local_init.expr {
-                    if let Pat::Ident(pat_ident) = &local.pat {
-                        let var_name = pat_ident.ident.to_string();
-                        // Store the loop variable and its initial value in the HashMap
-                        self.loop_vars.insert(var_name, lit.clone());
-                    }
-                }
-            }
-        }
+                if let Expr::Cast(cast_expr) = &*local_init.expr {
+                    if let Expr::Lit(lit) = &*cast_expr.expr {
+                        if let ExprLit {
+                            lit: Lit::Int(int_lit),
+                            ..
+                        } = lit
+                        {
+                            let int_lit = int_lit.base10_parse::<i32>().unwrap();
 
-        println!("Finished checking variable assignments\n");
-
-        // Then, check if the statement is a `while` loop we want to transform
-        if let Stmt::Expr(Expr::While(while_loop), _) = stmt {
-            println!("Statement is a while loop: {:?}\n", while_loop);
-            if let Expr::Binary(cond) = &*while_loop.cond {
-                // Check that the condition matches the pattern `<loop_var> < <upper_bound>`
-                if let (Expr::Path(var_path), Expr::Lit(upper_bound)) = (&*cond.left, &*cond.right) {
-                    if let Some(var_ident) = var_path.path.get_ident() {
-                        let var_name = var_ident.to_string();
-                        println!("Checking if initial value exists for string {} in hashmap {:?} that returns {:?}\n", var_name, self.loop_vars, self.loop_vars.get(&var_name));
-                        // Check if we have an initial value for this loop variable
-                        if let Some(init_value) = self.loop_vars.get(&var_name) {
-                            let mut loop_body = while_loop.body.clone();
-
-                            // Remove any increment statements for the loop variable in the body
-                            loop_body.stmts.retain(|stmt| {
-                                if let Stmt::Expr(Expr::Assign(assign_expr), _) = stmt {
-                                    if let Expr::Path(ref left_path) = *assign_expr.left {
-                                        return left_path != var_path;
-                                    }
-                                }
-                                true
-                            });
-
-                            // Create the new `for` loop statement
-                            let for_loop_stmt: Stmt = syn::parse_quote! {
-                                for #var_ident in #init_value..#upper_bound {
-                                    #loop_body
-                                }
-                            };
-
-                            // Replace the `while` loop statement with the `for` loop
-                            *stmt = for_loop_stmt;
-
-                            // Remove the variable from the HashMap after transformation
-                            self.loop_vars.remove(&var_name);
+                            self.loop_vars
+                                .insert(local.pat.to_token_stream().to_string(), int_lit);
                         }
                     }
                 }
             }
         }
 
-        // Continue visiting other statements normally
-        syn::visit_mut::visit_stmt_mut(self, stmt);
+        println!("loop_vars: {:?}\n", self.loop_vars);
+
+        // Then, check if the statement is a `while` loop we want to transform
+        if let Stmt::Expr(Expr::While(while_loop), _) = stmt {
+            // println!("WHILE LOOP COND: {}\n\n", while_loop.cond.to_token_stream());
+            if let Expr::Binary(cond) = &*while_loop.cond {
+                // Check that the condition matches the pattern `<loop_var> < <upper_bound>`
+                // println!("LEFT: {}\n\n", cond.left.to_token_stream());
+                // println!("RIGHT: {}\n\n", cond.right.to_token_stream());
+                // println!("BODY: {}\n\n", while_loop.body.to_token_stream());
+
+                // if the condition is a binary expression, we want to replace it with a for loop
+
+                if let Expr::Path(left) = &*cond.left {
+                    // println!("path: {}", left.to_token_stream());
+                    if let Expr::Path(right) = &*cond.right {
+                        // println!("lit: {}", right.to_token_stream());
+
+                        let l_var = left.path.segments[0].ident.to_string();
+                        let r_var = right.path.segments[0].ident.to_string();
+
+                        // println!("l_var: {:?}", l_var);
+                        // println!("r_var: {:?}", r_var);
+
+                        // if let Some(loop_var) =
+                        //     self.loop_vars.get(&path.path.segments[0].ident.to_string())
+                        // {
+                        //   println!("loop_var: {:?}", loop_var);
+                        //     // Check that the loop variable is the same as the one we stored
+                        //     if loop_var == lit {
+                        //         // Replace the while loop with a for loop
+                        //         let for_loop = syn::parse_quote! {
+                        //             for #path in 0..#lit {
+                        //                 #while_loop.body
+                        //             }
+                        //         };
+                        //         *stmt = syn::Stmt::Expr(syn::Expr::ForLoop(for_loop), None);
+                        //     }
+                        // }
+                    }
+                }
+            }
+
+            // Continue visiting other statements normally
+            syn::visit_mut::visit_stmt_mut(self, stmt);
+        }
     }
 }
 
