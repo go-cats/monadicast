@@ -28,11 +28,13 @@ impl Visit<'_> for WhileLoopReplacer {
 
 impl VisitMut for WhileLoopReplacer {
     fn visit_stmt_mut(&mut self, stmt: &mut Stmt) {
-        // First, check if the statement is a local variable assignment (e.g., `let mut i = 1`)
-        // println!("STMT: {:?}\n\n", stmt);
-        // get the loop variable and the value that it is initialized to
         if let Stmt::Local(local) = stmt {
-            println!("LOCAL: {:?}\n\n", local.pat);
+            let mut variable_name = String::new();
+            if let Pat::Type(t) = &local.pat {
+                if let Pat::Ident(ident) = &*t.pat {
+                    variable_name = ident.ident.to_string();
+                }
+            }
             if let Some(local_init) = local.init.as_ref() {
                 if let Expr::Cast(cast_expr) = &*local_init.expr {
                     if let Expr::Lit(lit) = &*cast_expr.expr {
@@ -43,24 +45,23 @@ impl VisitMut for WhileLoopReplacer {
                         {
                             let int_lit = int_lit.base10_parse::<i32>().unwrap();
 
-                            self.loop_vars
-                                .insert(local.pat.to_token_stream().to_string(), int_lit);
+                            self.loop_vars.insert(variable_name.clone(), int_lit);
                         }
                     }
                 }
             }
         }
 
-        println!("loop_vars: {:?}\n", self.loop_vars);
+        // println!("loop_vars: {:?}\n", self.loop_vars);
 
         // Then, check if the statement is a `while` loop we want to transform
         if let Stmt::Expr(Expr::While(while_loop), _) = stmt {
             // println!("WHILE LOOP COND: {}\n\n", while_loop.cond.to_token_stream());
             if let Expr::Binary(cond) = &*while_loop.cond {
                 // Check that the condition matches the pattern `<loop_var> < <upper_bound>`
-                // println!("LEFT: {}\n\n", cond.left.to_token_stream());
-                // println!("RIGHT: {}\n\n", cond.right.to_token_stream());
-                // println!("BODY: {}\n\n", while_loop.body.to_token_stream());
+                println!("LEFT: {}\n\n", cond.left.to_token_stream());
+                println!("RIGHT: {}\n\n", cond.right.to_token_stream());
+                println!("BODY: {}\n\n", while_loop.body.to_token_stream());
 
                 // if the condition is a binary expression, we want to replace it with a for loop
 
@@ -72,24 +73,26 @@ impl VisitMut for WhileLoopReplacer {
                         let l_var = left.path.segments[0].ident.to_string();
                         let r_var = right.path.segments[0].ident.to_string();
 
-                        // println!("l_var: {:?}", l_var);
-                        // println!("r_var: {:?}", r_var);
+                        println!("l_var: {:?}", l_var);
+                        println!("r_var: {:?}", r_var);
 
-                        // if let Some(loop_var) =
-                        //     self.loop_vars.get(&path.path.segments[0].ident.to_string())
-                        // {
-                        //   println!("loop_var: {:?}", loop_var);
-                        //     // Check that the loop variable is the same as the one we stored
-                        //     if loop_var == lit {
-                        //         // Replace the while loop with a for loop
-                        //         let for_loop = syn::parse_quote! {
-                        //             for #path in 0..#lit {
-                        //                 #while_loop.body
-                        //             }
-                        //         };
-                        //         *stmt = syn::Stmt::Expr(syn::Expr::ForLoop(for_loop), None);
-                        //     }
-                        // }
+                        let contained = self.loop_vars.contains_key(&l_var);
+
+                        println!("contained: {:?}", contained);
+
+                        // if we have a loop variable, we can replace the while loop with a for loop using the boundary stored in the hashmap
+                        if contained {
+                            let upper_bound = self.loop_vars.get(&l_var).unwrap();
+                            let lower_bound = 0;
+
+                            let for_loop = syn::parse_quote! {
+                                for #l_var in #lower_bound..#r_var {
+                                }
+                            };
+
+                            // Replace the while loop with the for loop
+                            *stmt = syn::Stmt::Expr(for_loop, None);
+                        }
                     }
                 }
             }
