@@ -29,6 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .convert_ffi_types()
                     .replace_raw_pointers()
                     .replace_while_loop()
+                    .remove_useless_identifier_expressions()
                     .result();
 
                 let relative_path = input_path.strip_prefix("examples")?;

@@ -16,9 +16,7 @@ pub unsafe fn insertion_sort(n: i32, p: *mut i32) {
         while j > 0 as i32 && *p.offset((j - 1 as i32) as isize) > tmp {
             *p.offset(j as isize) = *p.offset((j - 1 as i32) as isize);
             j -= 1;
-            j;
         }
         *p.offset(j as isize) = tmp;
-        i;
     }
 }

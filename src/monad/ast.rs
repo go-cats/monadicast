@@ -1,4 +1,5 @@
 use crate::passes::convert_ffi_types::TypeReplacer;
+use crate::passes::remove_dangling_identifiers::IdentifierExpressionRemover;
 use crate::passes::replace_raw_pointers::RawPointerSanitizer;
 use crate::passes::replace_while_loop::WhileLoopReplacer;
 use syn::{parse_file, Error, File};
@@ -45,6 +46,10 @@ impl MonadicAst {
     /// equivalent determined via static analysis on their accesses and usages.
     pub fn replace_while_loop(self) -> Self {
         WhileLoopReplacer::default().bind(self)
+    }
+
+    pub fn remove_useless_identifier_expressions(self) -> Self {
+        IdentifierExpressionRemover::default().bind(self)
     }
 }
 
