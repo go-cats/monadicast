@@ -122,16 +122,10 @@ impl RawPointerSanitizer {
 
     fn identify_raw_pointer_args(&mut self, ast: &mut File) {
         self.visit_file(ast);
-
-        // TODO(eyoon): delete debug log
-        println!(
-            "{:?}",
-            &self
-                .pointers
-                .iter()
-                .map(|(id, (_, set))| (id.to_string(), set))
-                .collect::<Vec<_>>()
-        );
+        // // TODO(eyoon): delete debug log
+        // println!("{:?}", &self.pointers.iter().map(|(id, (_, set))| (id.to_string(), set))
+        //         .collect::<Vec<_>>()
+        // );
 
         // Advance state from 'Uninitialized' to 'Computing'
         match self.types {
@@ -261,6 +255,7 @@ fn expr_if_unary_deref(input_expr: &Box<Expr>) -> Option<&Box<Expr>> {
     None
 }
 
+#[inline]
 fn is_offset(ident: &Ident) -> bool {
     ident.to_string().eq("offset")
 }
