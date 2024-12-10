@@ -142,9 +142,9 @@ impl VisitMut for WhileLoopReplacer {
                     let filtered_stmts: Vec<Stmt> = while_loop
                         .body
                         .stmts
-                        .clone()
-                        .into_iter()
+                        .iter()
                         .filter(|stmt| !self.is_increment_stmt(stmt, &l_var))
+                        .copied()
                         .collect();
 
                     // Create a new block with the filtered statements
